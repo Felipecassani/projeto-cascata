@@ -1,75 +1,84 @@
-#include <Arduino.h> // Necessário para PlatformIO, mas não para Arduino IDE - biblioteca incluída automaticamente na IDE
+#include <Arduino.h> // Necessario para PlatformIO/CLion, nao para Wokwi/Arduino IDE
 
 /*
- * UC01786 - Automatização de uma Cascata com Aquecimento Solar
- * Entregável da escola: 100% Arduino IDE, sem rede (WiFi/MQTT fica na
- * versão de casa, em ../firmware_esp32_ha).
- *
- * Adaptado para Arduino Uno (20 pinos utilizáveis) em vez do Arduino Mega
- * do guia oficial de montagem - por isso os sinalizadores verde/amarelo/
- * vermelho e o alarme partilham o pino do vermelho (ver atualizarSaidas).
- */
+ * UC01786 - Automatizacao de uma Cascata com Aquecimento Solar */
 
-// ===================== PINOS (Arduino Uno) =====================
-// O Uno só tem 20 pinos utilizáveis (D2-D13 + A0-A5; D0/D1 reservados para
-// o Serial). Usa-se aqui exatamente esses 18 pinos, um a um.
+// ===================== PINOS (Arduino Mega 2560) =====================
 
-// Sensor de caudal (YF-S201 ou similar) - pulso, precisa de pino de interrupção
-const int PIN_CAUDAL = 2; // INT0 no Uno (D2 ou D3 são os únicos com interrupção)
+// Sensor de caudal (YF-S201 ou similar) - pulso, precisa de pino de interrupcao
+const uint8_t PIN_CAUDAL = 2; // INT0 no Mega (2, 3, 18, 19, 20, 21 tem interrupcao)
 
 // Entradas de controlo
-const int PIN_START = 3;
-const int PIN_STOP = 4;
-const int PIN_EMERGENCIA = 5;
-const int PIN_SELETOR_AUTO = 6; // HIGH (aberto, pull-up) = automático, LOW = manual
+const uint8_t PIN_START = 3;
+const uint8_t PIN_STOP = 4;
+const uint8_t PIN_EMERGENCIA = 5;
+const uint8_t PIN_SELETOR_AUTO = 6; // HIGH (aberto, pull-up) = automatico, LOW = manual
 
-// Sensores de nível - HC-SR04, pino dedicado por sensor
-const int PIN_TRIG_NIVEL_SUP = 7;
-const int PIN_ECHO_NIVEL_SUP = 8;
-const int PIN_TRIG_NIVEL_INF = 9;
-const int PIN_ECHO_NIVEL_INF = 10;
+// Sensores de nivel - HC-SR04, pino dedicado por sensor
+const uint8_t PIN_TRIG_NIVEL_SUP = 7;
+const uint8_t PIN_ECHO_NIVEL_SUP = 8;
+const uint8_t PIN_TRIG_NIVEL_INF = 9;
+const uint8_t PIN_ECHO_NIVEL_INF = 10;
 
-// Saídas - bombas
-const int PIN_BOMBA_IMPULSAO = 11;
-const int PIN_BOMBA_RETORNO = 12;
-const int PIN_BOMBA_RECIRC = 13;
+// Saidas - bombas (modulo rele: HIGH no pino IN liga o rele)
+const uint8_t PIN_BOMBA_IMPULSAO = 11;
+const uint8_t PIN_BOMBA_RETORNO = 12;
+const uint8_t PIN_BOMBA_RECIRC = 13;
 
-// Sensores analógicos
-const int PIN_TEMP_ENTRADA = A0;
-const int PIN_TEMP_SAIDA = A1;
-const int PIN_CORRENTE = A2; // ACS712 ou similar
+// Sensores analogicos
+const uint8_t PIN_TEMP_ENTRADA = A0; // sensor de temperatura analogico (NTC), Vout
+const uint8_t PIN_TEMP_SAIDA = A1;   // idem, saida da serpentina
+const uint8_t PIN_CORRENTE = A2;     // potenciometro simulando ACS712 (sem parte real no Wokwi)
 
-// Saídas - sinalização
-const int PIN_SINAL_VERDE = A3;    // A3-A5 usados como digitais (não precisam ser analógicos)
-const int PIN_SINAL_AMARELO = A4;
-const int PIN_SINAL_VERMELHO = A5; // também aciona o alarme (ver atualizarSaidas) -
-                                    // ligue o LED vermelho e o buzzer/relé de alarme
-                                    // neste mesmo pino: o Uno não tem pino de sobra
-                                    // para um alarme separado como no Mega do guia oficial
+// Saidas - sinalizacao (LED RGB com os 3 canais, 1 cor por estado - ver atualizarSaidas)
+const uint8_t PIN_SINAL_R = A3; // canal vermelho do LED RGB
+const uint8_t PIN_SINAL_G = A4; // canal verde do LED RGB
+const uint8_t PIN_SINAL_B = A7; // canal azul do LED RGB (NOVO 2026-08-01: mais cores por estado)
+const uint8_t PIN_BUZZER = A5;  // buzzer com pino proprio (nao depende do LED)
 
-// ===================== SENSOR DE CAUDAL (por pulso/interrupção) =====================
+// NOVO (2026-08-01): sensor de luz (LDR), desliga o sistema a noite
+const uint8_t PIN_LDR = A6; // modulo fotoresistor, saida analogica (AO)
 
-volatile unsigned long contadorPulsos = 0;
+// ===================== SENSOR DE CAUDAL (por pulso, deteccao por polling) =====================
+// Nota: no hardware real, com um sensor de fluxo de verdade (pulsos rapidos),
+// usar attachInterrupt() seria o correto. Mas nesta simulacao o "sensor de
+// caudal" e na verdade um botao manual (Wokwi/Tinkercad nao tem um sensor de
+// fluxo real no catalogo) - so precisa detetar cliques ocasionais, entao
+// polling a cada ciclo de 100ms e suficiente. Alem disso, attachInterrupt()
+// nesse pino travou a simulacao no Wokwi (testado em 2026-08-01 - a
+// simulacao parava em ~0.2s de tempo virtual e nunca avancava, mesmo depois
+// de varios minutos reais) - polling evita esse problema por completo.
 
-void isrCaudal()
-{
-    contadorPulsos++;
-}
+unsigned long contadorPulsos = 0;
+bool estadoAnteriorCaudal = HIGH; // pino com pull-up: HIGH = solto/nao pressionado
 
-// ===================== LIMIARES (ajustar após calibração) =====================
+// ===================== LIMIARES (ajustar apos calibracao) =====================
 
-const int LIMIAR_NIVEL_MIN_CM = 40;     // acima disto (cm até a água) = falta de água
-const int LIMIAR_NIVEL_MAX_CM = 5;      // abaixo disto (cm até a água) = transbordo
-const float LIMIAR_CAUDAL_MIN_HZ = 2.0; // pulsos/seg abaixo disto = ausência de caudal
+const int LIMIAR_NIVEL_MIN_CM = 40;     // acima disto (cm ate a agua) = falta de agua
+const int LIMIAR_NIVEL_MAX_CM = 5;      // abaixo disto (cm ate a agua) = transbordo
+const float LIMIAR_CAUDAL_MIN_HZ = 2.0; // pulsos/seg abaixo disto = ausencia de caudal
 const int LIMIAR_CORRENTE_MAX = 800;    // acima disto = sobrecorrente
 const int LIMIAR_CORRENTE_ARRANQUE = 80; // abaixo disto com a bomba ligada = bomba bloqueada
 const unsigned long TIMEOUT_ARRANQUE_BOMBA_MS = 4000;
-const float DELTA_TEMP_LIGA = 5.0;      // diferencial mínimo p/ recircular (°C)
+const float DELTA_TEMP_LIGA = 5.0;      // diferencial minimo p/ recircular (unidades ADC)
 const float DELTA_TEMP_DESLIGA = 1.0;
 const int LEITURAS_INVALIDAS_PARA_AVARIA = 10; // ciclos consecutivos
+const int LIMIAR_LUZ_NOITE = 300; // ACIMA disto (0-1023) = escuro/noite.
+                                   // wokwi-photoresistor-sensor tem resistor em serie com o LDR
+                                   // formando divisor de tensao: no escuro a resistencia do LDR sobe,
+                                   // entao o AO (ligado entre LDR e o resistor) SOBE tambem - confirmado
+                                   // na doc oficial (docs.wokwi.com/parts/wokwi-photoresistor-sensor,
+                                   // tabela de luminancia: 0.1 lux -> leitura 1016, 100000 lux -> leitura 8).
 
-// ===================== MÁQUINAS DE ESTADOS =====================
-// Numeração conforme a Ficha Prática nº1.
+// Derivados dos limiares acima - dao nome aos "numeros magicos" que antes
+// apareciam soltos (ex: "LIMIAR_NIVEL_MAX_CM * 1.5") nas transicoes de
+// estado abaixo. Mesmo valor, mais facil de ler e de recalibrar depois.
+const float NIVEL_QUASE_CHEIO_CM = LIMIAR_NIVEL_MAX_CM * 1.5;       // ENCHIMENTO -> IMPULSAO
+const float NIVEL_MIN_PARA_RETORNO_CM = LIMIAR_NIVEL_MIN_CM * 0.6;  // gatilho do RETORNO: superior a ficar baixo
+const float NIVEL_INF_DISPONIVEL_CM = LIMIAR_NIVEL_MAX_CM * 2;      // gatilho do RETORNO: inferior tem agua
+
+// ===================== MAQUINAS DE ESTADOS =====================
+// Numeracao conforme a Ficha Pratica no1.
 
 enum EstadoCascata
 {
@@ -97,29 +106,40 @@ enum EstadoSolar
 EstadoCascata estadoCascata = DESLIGADO;
 EstadoSolar estadoSolar = ESPERA;
 
-// Variáveis de sensores (atualizadas a cada volta do loop)
-float nivelSup, nivelInf;             // distância sensor->água, em cm (menor = mais cheio)
-int tempEntrada, tempSaida, corrente; // leitura analógica bruta
+// Variaveis de sensores (atualizadas a cada volta do loop)
+float nivelSup, nivelInf;             // distancia sensor->agua, em cm (menor = mais cheio)
+int tempEntrada, tempSaida, corrente; // leitura analogica bruta
+int leituraLuz;                       // leitura analogica bruta do LDR (0-1023)
 float caudal;                         // pulsos por segundo
 bool falhaDetetada = false;
-String descricaoFalha = "";
+// const char* em vez de String: a classe String do Arduino aloca memoria
+// dinamicamente a cada atribuicao, e reatribuir isto centenas de vezes por
+// minuto (a cada volta do loop com falha ativa) fragmenta a RAM ate travar -
+// risco real num programa que deve rodar continuamente. Como so atribuimos
+// literais fixos, um ponteiro simples resolve sem esse custo.
+const char *descricaoFalha = "";
 bool modoAutomatico = true;
+bool noite = false; // true quando leituraLuz indica escuro (ver LIMIAR_LUZ_NOITE)
 
-// Contadores para deteção de "sensor avariado"
+// Contadores para deteccao de "sensor avariado"
 int leiturasInvalidasNivelSup = 0, leiturasInvalidasNivelInf = 0;
 int leiturasInvalidasTemp = 0, leiturasInvalidasCorrente = 0;
 
-// Deteção de "bomba bloqueada"
+// Deteccao de "bomba bloqueada"
 unsigned long tempoLigadaImpulsao = 0; // millis() de quando a bomba ligou (0 = desligada)
 
-// Temporização não-bloqueante
+// Temporizacao nao-bloqueante
 unsigned long tempoAnterior = 0;
-const unsigned long INTERVALO_LEITURA = 100; // ms
+const unsigned long INTERVALO_LEITURA = 100; // ms (alvo nominal - ver ultimoIntervaloMs)
 
-// ===================== PROTÓTIPOS =====================
-// Necessário num ficheiro .cpp: ao contrário dos .ino, o PlatformIO
-// não gera protótipos automaticamente, por isso loop() precisa deles
-// declarados antes de serem definidos mais abaixo no ficheiro.
+// Duracao real do ultimo ciclo, em ms. Os dois lerDistanciaCm() em sequencia
+// podem bloquear ate 30ms cada num timeout de sensor, entao o intervalo
+// verdadeiro entre leituras as vezes passa bem de 100ms - usar esse valor
+// real (em vez de assumir sempre INTERVALO_LEITURA) evita que o calculo do
+// caudal fique impreciso quando isso acontece.
+unsigned long ultimoIntervaloMs = INTERVALO_LEITURA;
+
+// ===================== PROTOTIPOS =====================
 
 float lerDistanciaCm(int pinTrig, int pinEcho);
 void lerSensores();
@@ -147,16 +167,16 @@ void setup()
     pinMode(PIN_ECHO_NIVEL_INF, INPUT);
 
     pinMode(PIN_CAUDAL, INPUT_PULLUP);
-    attachInterrupt(digitalPinToInterrupt(PIN_CAUDAL), isrCaudal, FALLING);
 
     pinMode(PIN_BOMBA_IMPULSAO, OUTPUT);
     pinMode(PIN_BOMBA_RETORNO, OUTPUT);
     pinMode(PIN_BOMBA_RECIRC, OUTPUT);
-    pinMode(PIN_SINAL_VERDE, OUTPUT);
-    pinMode(PIN_SINAL_AMARELO, OUTPUT);
-    pinMode(PIN_SINAL_VERMELHO, OUTPUT);
+    pinMode(PIN_SINAL_R, OUTPUT);
+    pinMode(PIN_SINAL_G, OUTPUT);
+    pinMode(PIN_SINAL_B, OUTPUT);
+    pinMode(PIN_BUZZER, OUTPUT);
 
-    Serial.println("Sistema Cascata UC01786 - inicializado");
+    Serial.println(F("Sistema Cascata UC01786 (Mega) - inicializado"));
 }
 
 // ===================== LOOP PRINCIPAL =====================
@@ -166,6 +186,7 @@ void loop()
     unsigned long agora = millis();
     if (agora - tempoAnterior >= INTERVALO_LEITURA)
     {
+        ultimoIntervaloMs = agora - tempoAnterior;
         tempoAnterior = agora;
 
         modoAutomatico = (digitalRead(PIN_SELETOR_AUTO) == HIGH);
@@ -184,16 +205,14 @@ void loop()
 
 float lerDistanciaCm(int pinTrig, int pinEcho)
 {
-    digitalWrite(pinTrig, LOW);
-    delayMicroseconds(2);
     digitalWrite(pinTrig, HIGH);
     delayMicroseconds(10);
     digitalWrite(pinTrig, LOW);
 
-    unsigned long duracao = pulseIn(pinEcho, HIGH, 30000); // timeout 30ms
+    unsigned long duracao = pulseIn(pinEcho, HIGH, 30000); // timeout 30ms (timeouts maiores travam a simulacao no Wokwi - testado 2026-08-01)
     if (duracao == 0)
-        return -1.0;                // sem eco = leitura inválida
-    return duracao * 0.0343 / 2.0; // cm
+        return -1.0;                // sem eco = leitura invalida
+    return duracao / 58.0; // cm
 }
 
 void lerSensores()
@@ -211,8 +230,10 @@ void lerSensores()
     tempEntrada = analogRead(PIN_TEMP_ENTRADA);
     tempSaida = analogRead(PIN_TEMP_SAIDA);
     corrente = analogRead(PIN_CORRENTE);
+    leituraLuz = analogRead(PIN_LDR);
+    noite = (leituraLuz > LIMIAR_LUZ_NOITE); // corrigido: era "<", invertido (ver comentario acima)
 
-    // Leitura fora da faixa fisicamente plausível (0 ou saturada) várias
+    // Leitura fora da faixa fisicamente plausivel (0 ou saturada) varias
     // vezes seguidas = sensor desligado/avariado.
     bool tempSuspeita = (tempEntrada <= 0 || tempEntrada >= 1023 || tempSaida <= 0 || tempSaida >= 1023);
     leiturasInvalidasTemp = tempSuspeita ? (leiturasInvalidasTemp + 1) : 0;
@@ -220,16 +241,26 @@ void lerSensores()
     bool correnteSuspeita = (corrente <= 0 || corrente >= 1023);
     leiturasInvalidasCorrente = correnteSuspeita ? (leiturasInvalidasCorrente + 1) : 0;
 
-    // Frequência de pulso do sensor de caudal (Hz), com base no intervalo de leitura
-    caudal = (contadorPulsos * 1000.0) / INTERVALO_LEITURA;
+    // Deteta a borda de descida (solto -> pressionado) por polling - ver
+    // comentario na declaracao de contadorPulsos, acima, sobre porque nao
+    // usamos attachInterrupt() aqui.
+    bool estadoAtualCaudal = digitalRead(PIN_CAUDAL);
+    if (estadoAnteriorCaudal == HIGH && estadoAtualCaudal == LOW)
+        contadorPulsos++;
+    estadoAnteriorCaudal = estadoAtualCaudal;
+
+    // Frequencia de pulso do sensor de caudal (Hz), com base na duracao real
+    // do ciclo (ver comentario de ultimoIntervaloMs acima do loop()).
+    caudal = (contadorPulsos * 1000.0) / ultimoIntervaloMs;
     contadorPulsos = 0;
 }
 
-// ===================== DETEÇÃO DE AVARIAS - CASCATA =====================
-// Pode interromper qualquer estado e forçar AVARIA_CASCATA.
-// Cobre as 7 avarias da ficha: falta de água, ausência de caudal, bomba
+// ===================== DETECAO DE AVARIAS - CASCATA =====================
+// Pode interromper qualquer estado e forcar AVARIA_CASCATA.
+// Cobre as 7 avarias da ficha: falta de agua, ausencia de caudal, bomba
 // bloqueada, sobrecorrente, sensor avariado, transbordo e falha do
-// aquecimento solar.
+// aquecimento solar. (O desligamento noturno NAO e uma avaria - e tratado
+// à parte em maquinaEstadosCascata(), como uma paragem programada normal.)
 
 void verificarAvarias()
 {
@@ -278,7 +309,7 @@ void verificarAvarias()
     if (estadoSolar == AVARIA_SOLAR)
     {
         // A ficha lista "falha do aquecimento solar" como avaria da cascata,
-        // por isso propaga-se para a máquina de estados principal.
+        // por isso propaga-se para a maquina de estados principal.
         falhaDetetada = true;
         descricaoFalha = "Falha do aquecimento solar";
     }
@@ -291,15 +322,16 @@ void verificarAvarias()
 
 void verificarAvariaSolar()
 {
-    if (estadoSolar == RECIRCULACAO && tempSaida <= tempEntrada && (tempEntrada - tempSaida) < -50)
+    // Deteta diferencial (saida - entrada) muito negativo e sustentado
+    // durante recirculacao - sinal de sensores trocados ou serpentina sem
+    // efeito nenhum.
+    if (estadoSolar == RECIRCULACAO && (tempSaida - tempEntrada) < -50)
     {
-        // Diferencial muito negativo e sustentado sugere sensor trocado ou
-        // serpentina sem efeito nenhum - simplificado para o âmbito do Uno.
         estadoSolar = AVARIA_SOLAR;
     }
 }
 
-// ===================== MÁQUINA DE ESTADOS - CASCATA =====================
+// ===================== MAQUINA DE ESTADOS - CASCATA =====================
 
 void maquinaEstadosCascata()
 {
@@ -312,29 +344,37 @@ void maquinaEstadosCascata()
         estadoCascata = PARAGEM;
     }
 
+    // Desligamento noturno (NOVO): mesma sequencia segura de paragem da
+    // emergencia (PARAGEM -> ESVAZIAMENTO -> PARADO), mas nao e uma avaria -
+    // e so nao reiniciar sozinho enquanto estiver escuro. Some ao amanhecer.
+    if (noite && estadoCascata != PARAGEM && estadoCascata != ESVAZIAMENTO && estadoCascata != PARADO && estadoCascata != DESLIGADO)
+    {
+        estadoCascata = PARAGEM;
+    }
+
     switch (estadoCascata)
     {
     case DESLIGADO:
-        if (start)
+        if (start && !noite)
         {
-            // Em manual, liga-se logo o funcionamento, sem a sequência
-            // temporizada de verificação/enchimento do modo automático.
+            // Em manual, liga-se logo o funcionamento, sem a sequencia
+            // temporizada de verificacao/enchimento do modo automatico.
             estadoCascata = modoAutomatico ? VERIFICACAO : FUNCIONAMENTO;
         }
         break;
 
     case VERIFICACAO:
-        // Só avança com os sensores válidos (ver verificarAvarias).
+        // So avanca com os sensores validos (ver verificarAvarias).
         estadoCascata = ENCHIMENTO;
         break;
 
     case ENCHIMENTO:
-        if (nivelSup <= LIMIAR_NIVEL_MAX_CM * 1.5)
+        if (nivelSup <= NIVEL_QUASE_CHEIO_CM)
             estadoCascata = IMPULSAO; // quase cheio
         break;
 
     case IMPULSAO:
-        // bomba de impulsão liga (ver atualizarSaidas)
+        // bomba de impulsao liga (ver atualizarSaidas)
         estadoCascata = FUNCIONAMENTO;
         break;
 
@@ -343,22 +383,22 @@ void maquinaEstadosCascata()
         {
             estadoCascata = modoAutomatico ? PARAGEM : DESLIGADO;
         }
-        else if (modoAutomatico && nivelSup < LIMIAR_NIVEL_MIN_CM * 0.6 && nivelInf > LIMIAR_NIVEL_MAX_CM * 2)
+        else if (modoAutomatico && nivelSup < NIVEL_MIN_PARA_RETORNO_CM && nivelInf > NIVEL_INF_DISPONIVEL_CM)
         {
-            // Depósito superior a ficar baixo e reservatório inferior com
-            // água disponível - coordena impulsão + retorno.
+            // Deposito superior a ficar baixo e reservatorio inferior com
+            // agua disponivel - coordena impulsao + retorno.
             estadoCascata = RETORNO;
         }
         break;
 
     case RETORNO:
-        // bomba de impulsão continua ligada; bomba de retorno também liga
-        // (ver atualizarSaidas) para repor o depósito superior.
+        // bomba de impulsao continua ligada; bomba de retorno tambem liga
+        // (ver atualizarSaidas) para repor o deposito superior.
         if (stop)
         {
             estadoCascata = PARAGEM;
         }
-        else if (nivelSup >= LIMIAR_NIVEL_MAX_CM * 1.5)
+        else if (nivelSup >= NIVEL_QUASE_CHEIO_CM)
         {
             estadoCascata = FUNCIONAMENTO;
         }
@@ -373,26 +413,26 @@ void maquinaEstadosCascata()
         break;
 
     case PARADO:
-        if (start && !emergencia)
+        if (start && !emergencia && !noite)
             estadoCascata = modoAutomatico ? VERIFICACAO : FUNCIONAMENTO;
         break;
 
     case AVARIA_CASCATA:
-        // só sai daqui com reset manual (ex: novo START após resolver falha)
+        // so sai daqui com reset manual (ex: novo START apos resolver falha)
         if (start && !falhaDetetada)
             estadoCascata = DESLIGADO;
         break;
     }
 
     if (digitalRead(PIN_BOMBA_IMPULSAO) == LOW)
-        tempoLigadaImpulsao = 0; // será marcado em atualizarSaidas() quando ligar
+        tempoLigadaImpulsao = 0; // sera marcado em atualizarSaidas() quando ligar
 }
 
-// ===================== MÁQUINA DE ESTADOS - SOLAR =====================
+// ===================== MAQUINA DE ESTADOS - SOLAR =====================
 
 void maquinaEstadosSolar()
 {
-    float diferencial = (tempSaida - tempEntrada); // >0 = serpentina a aquecer a água
+    float diferencial = (tempSaida - tempEntrada); // >0 = serpentina a aquecer a agua
 
     switch (estadoSolar)
     {
@@ -415,7 +455,7 @@ void maquinaEstadosSolar()
         // bomba recirculadora liga (ver atualizarSaidas)
         if (diferencial < DELTA_TEMP_DESLIGA)
             estadoSolar = ESPERA;
-        // TODO: definir limiar real de temperatura máxima da serpentina
+        // TODO: definir limiar real de temperatura maxima da serpentina
         break;
 
     case TEMPERATURA_MAXIMA:
@@ -424,14 +464,14 @@ void maquinaEstadosSolar()
 
     case AVARIA_SOLAR:
         // Sai da avaria solar quando a avaria geral da cascata for
-        // reconhecida (START após resolver o problema).
+        // reconhecida (START apos resolver o problema).
         if (!falhaDetetada)
             estadoSolar = ESPERA;
         break;
     }
 }
 
-// ===================== ATUALIZAÇÃO DE SAÍDAS =====================
+// ===================== ATUALIZACAO DE SAIDAS =====================
 
 void atualizarSaidas()
 {
@@ -451,36 +491,60 @@ void atualizarSaidas()
     digitalWrite(PIN_BOMBA_RETORNO, ligarRetorno);
     digitalWrite(PIN_BOMBA_RECIRC, ligarRecirc);
 
-    digitalWrite(PIN_SINAL_VERMELHO, avaria); // aciona LED vermelho + alarme no mesmo pino
-    digitalWrite(PIN_SINAL_VERDE, (estadoCascata == FUNCIONAMENTO || estadoCascata == RETORNO) && !avaria);
-    digitalWrite(PIN_SINAL_AMARELO, (estadoCascata == VERIFICACAO || estadoCascata == ENCHIMENTO) && !avaria);
+    // LED RGB - 1 cor por grupo de estados da maquina de estados da cascata
+    // 3 cores pra distinguir mais coisas, nao so
+    // avaria/funcionamento/verificacao). Estados nunca se sobrepoem (so um
+    // "estadoCascata" ativo por vez), entao os grupos abaixo sao mutuamente
+    // exclusivos - cada estado sempre acende exatamente 1 cor:
+    //   DESLIGADO(0)                    -> apagado
+    //   VERIFICACAO(1)/ENCHIMENTO(3)    -> amarelo   (R+G) - preparando
+    //   IMPULSAO(2)/FUNCIONAMENTO(5)    -> verde     (G)   - operando
+    //   RETORNO(4)                      -> ciano     (G+B) - impulsao+retorno juntos
+    //   PARAGEM(6)/ESVAZIAMENTO(7)      -> azul      (B)   - parando em seguranca
+    //   PARADO(8)                       -> magenta   (R+B) - parado, pronto pra reiniciar
+    //   AVARIA_CASCATA(9)               -> vermelho  (R)   - falha, precisa reset manual
+    bool preparando = (estadoCascata == VERIFICACAO || estadoCascata == ENCHIMENTO);
+    bool operando = (estadoCascata == IMPULSAO || estadoCascata == FUNCIONAMENTO);
+    bool retornando = (estadoCascata == RETORNO);
+    bool parandoSeguro = (estadoCascata == PARAGEM || estadoCascata == ESVAZIAMENTO);
+    bool parado = (estadoCascata == PARADO);
+
+    digitalWrite(PIN_SINAL_R, avaria || preparando || parado);
+    digitalWrite(PIN_SINAL_G, operando || retornando || preparando);
+    digitalWrite(PIN_SINAL_B, retornando || parandoSeguro || parado);
+    digitalWrite(PIN_BUZZER, avaria);
 }
 
 // ===================== REGISTO DE DADOS =====================
 
 void registarDados()
 {
-    Serial.print("EstadoCascata=");
+    // F() mantem estes literais na flash em vez de copiar para a RAM.
+    Serial.print(F("EstadoCascata="));
     Serial.print(estadoCascata);
-    Serial.print(" EstadoSolar=");
+    Serial.print(F(" EstadoSolar="));
     Serial.print(estadoSolar);
-    Serial.print(" Modo=");
-    Serial.print(modoAutomatico ? "AUTO" : "MANUAL");
-    Serial.print(" NivelSup=");
+    Serial.print(F(" Modo="));
+    Serial.print(modoAutomatico ? F("AUTO") : F("MANUAL"));
+    Serial.print(F(" NivelSup="));
     Serial.print(nivelSup);
-    Serial.print(" NivelInf=");
+    Serial.print(F(" NivelInf="));
     Serial.print(nivelInf);
-    Serial.print(" TempEnt=");
+    Serial.print(F(" TempEnt="));
     Serial.print(tempEntrada);
-    Serial.print(" TempSai=");
+    Serial.print(F(" TempSai="));
     Serial.print(tempSaida);
-    Serial.print(" Caudal=");
+    Serial.print(F(" Caudal="));
     Serial.print(caudal);
-    Serial.print(" Corrente=");
+    Serial.print(F(" Corrente="));
     Serial.print(corrente);
+    Serial.print(F(" Luz="));
+    Serial.print(leituraLuz);
+    Serial.print(F(" Noite="));
+    Serial.print(noite ? F("SIM") : F("NAO"));
     if (falhaDetetada)
     {
-        Serial.print(" FALHA=");
+        Serial.print(F(" FALHA="));
         Serial.print(descricaoFalha);
     }
     Serial.println();
