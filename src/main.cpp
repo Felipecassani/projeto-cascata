@@ -278,7 +278,8 @@ float litrosCilindroinf()
     float alturaAguainf = constrain(CILINDRO_INF_ALTURA_CM - nivelInf, 0, CILINDRO_INF_ALTURA_CM);
     float litrosAguainf = M_PI * (CILINDRO_INF_RAIO_CM * CILINDRO_INF_RAIO_CM) * alturaAguainf / 1000.0;
     return litrosAguainf;
-}  // números de litros de um cilindro (π*r²*a)/1000, subtrai a distancia do sensor ate o nivel d´agua e aplicando a formula terei a quantidade de litros.
+}
+// números de litros de um cilindro (π*r²*a)/1000, subtrai a distancia do sensor ate o nivel d´agua e aplicando a formula terei a quantidade de litros.
 
 
 // ===================== DETECAO DE AVARIAS - CASCATA =====================
@@ -358,7 +359,7 @@ void verificarAvariaSolar()
 }
 
 // ===================== MAQUINA DE ESTADOS - CASCATA =====================
-
+// decide qual é o proximo estado da cascata
 void maquinaEstadosCascata()
 {
     bool start = (digitalRead(PIN_START) == LOW);
@@ -455,7 +456,7 @@ void maquinaEstadosCascata()
 }
 
 // ===================== MAQUINA DE ESTADOS - SOLAR =====================
-
+// decide o proximo estado solar
 void maquinaEstadosSolar()
 {
     float diferencial = (tempSaida - tempEntrada); // >0 = serpentina a aquecer a agua
@@ -498,7 +499,7 @@ void maquinaEstadosSolar()
 }
 
 // ===================== ATUALIZACAO DE SAIDAS =====================
-
+// atualiza todas as saídas conforme o estado atual ( liga os motores, led e buzzer )
 void atualizarSaidas()
 {
     bool avaria = (estadoCascata == AVARIA_CASCATA);
@@ -542,7 +543,7 @@ void atualizarSaidas()
 }
 
 // ===================== REGISTO DE DADOS =====================
-
+// todos os dados são exibidos no console
 void registarDados()
 {
     // F() mantem estes literais na flash em vez de copiar para a RAM.
@@ -568,6 +569,10 @@ void registarDados()
     Serial.print(leituraLuz);
     Serial.print(F(" Noite="));
     Serial.print(noite ? F("SIM") : F("NAO"));
+    Serial.print(F(" Litro de agua sup="));
+    Serial.print(litrosAguaSup);
+    Serial.print(F(" Litro de agua inf="));
+    Serial.print(litrosAguainf);
     if (falhaDetetada)
     {
         Serial.print(F(" FALHA="));
