@@ -76,6 +76,12 @@ const int LIMIAR_LUZ_NOITE = 300; // ACIMA disto (0-1023) = escuro/noite.
 const float NIVEL_QUASE_CHEIO_CM = LIMIAR_NIVEL_MAX_CM * 1.5;       // ENCHIMENTO -> IMPULSAO
 const float NIVEL_MIN_PARA_RETORNO_CM = LIMIAR_NIVEL_MIN_CM * 0.6;  // gatilho do RETORNO: superior a ficar baixo
 const float NIVEL_INF_DISPONIVEL_CM = LIMIAR_NIVEL_MAX_CM * 2;      // gatilho do RETORNO: inferior tem agua
+const float CAIXA_SUP_LADO_CM = 70.0; // largura da caixa superior
+const float CAIXA_SUP_ALTURA_CM = 60.0; // altura da caixa superior
+
+const float CILINDRO_INF_ALTURA_CM = 35.0; // altura do cilindo inferior
+const float CILINDRO_INF_DIAMETRO_CM = 45.0; // diametro do cilindro inferior
+const float CILINDRO_INF_RAIO_CM = 22.5; // raio do cilindro
 
 // ===================== MAQUINAS DE ESTADOS =====================
 // Numeracao conforme a Ficha Pratica no1.
@@ -107,6 +113,7 @@ EstadoCascata estadoCascata = DESLIGADO;
 EstadoSolar estadoSolar = ESPERA;
 
 // Variaveis de sensores (atualizadas a cada volta do loop)
+float litrosAguaSup, litrosAguainf;
 float nivelSup, nivelInf;             // distancia sensor->agua, em cm (menor = mais cheio)
 int tempEntrada, tempSaida, corrente; // leitura analogica bruta
 int leituraLuz;                       // leitura analogica bruta do LDR (0-1023)
@@ -149,7 +156,8 @@ void maquinaEstadosCascata();
 void maquinaEstadosSolar();
 void atualizarSaidas();
 void registarDados();
-
+float litrosCaixaSup();
+float litrosCilindroinf();
 // ===================== SETUP =====================
 
 void setup()
@@ -215,6 +223,8 @@ float lerDistanciaCm(int pinTrig, int pinEcho)
     return duracao / 58.0; // cm
 }
 
+
+
 void lerSensores()
 {
     float distSup = lerDistanciaCm(PIN_TRIG_NIVEL_SUP, PIN_ECHO_NIVEL_SUP);
@@ -226,7 +236,8 @@ void lerSensores()
         nivelSup = distSup;
     if (distInf >= 0)
         nivelInf = distInf;
-
+    litrosAguaSup = litrosCaixaSup();
+    litrosAguainf = litrosCilindroinf();
     tempEntrada = analogRead(PIN_TEMP_ENTRADA);
     tempSaida = analogRead(PIN_TEMP_SAIDA);
     corrente = analogRead(PIN_CORRENTE);
@@ -254,6 +265,21 @@ void lerSensores()
     caudal = (contadorPulsos * 1000.0) / ultimoIntervaloMs;
     contadorPulsos = 0;
 }
+
+float litrosCaixaSup()
+{
+    float alturaAguaSup = constrain(CAIXA_SUP_ALTURA_CM - nivelSup, 0, CAIXA_SUP_ALTURA_CM);
+    float litrosAguaSup = (CAIXA_SUP_LADO_CM * CAIXA_SUP_LADO_CM) * alturaAguaSup / 1000.0;
+    return litrosAguaSup;
+} // números de litros de um cubo (l*p*A)/1000, subtrai a distancia do sensor ate o nivel d´agua e aplicando a formula terei a quantidade de litros.
+
+float litrosCilindroinf()
+{
+    float alturaAguainf = constrain(CILINDRO_INF_ALTURA_CM - nivelInf, 0, CILINDRO_INF_ALTURA_CM);
+    float litrosAguainf = M_PI * (CILINDRO_INF_RAIO_CM * CILINDRO_INF_RAIO_CM) * alturaAguainf / 1000.0;
+    return litrosAguainf;
+}  // números de litros de um cilindro (π*r²*a)/1000, subtrai a distancia do sensor ate o nivel d´agua e aplicando a formula terei a quantidade de litros.
+
 
 // ===================== DETECAO DE AVARIAS - CASCATA =====================
 // Pode interromper qualquer estado e forcar AVARIA_CASCATA.
@@ -549,3 +575,6 @@ void registarDados()
     }
     Serial.println();
 }
+
+
+
