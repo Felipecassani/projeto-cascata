@@ -1,8 +1,8 @@
-# Automação de Cascata com Aquecimento Solar — Arduino Uno
+# Automação de Cascata com Aquecimento Solar — Arduino Mega 2560
 
 Entregável escolar (UC01786): automação de uma cascata de água com
 recirculação de nível e um circuito solar de aquecimento em paralelo —
-duas máquinas de estado a correr no mesmo Arduino Uno, sem rede
+duas máquinas de estado a correr no mesmo Arduino Mega 2560, sem rede
 (a versão com WiFi/MQTT + Home Assistant está em
 [firmware_esp32_ha](https://github.com/Felipecassani/firmware_esp32_ha)).
 
@@ -19,8 +19,7 @@ duas máquinas de estado a correr no mesmo Arduino Uno, sem rede
   avaria com sinalização (LED vermelho + alarme).
 
 ## Hardware
-- Arduino Uno (adaptado do guia oficial, pensado para Arduino Mega —
-  ver comentário no início do código sobre a partilha de pino do alarme)
+- Arduino Mega 2560 (migrado de um Arduino Uno; o guia de montagem oficial já era para Mega)
 - Sensor de caudal por pulso (interrupção)
 - 2x sensor ultrassónico HC-SR04 (nível superior/inferior)
 - Sensor de corrente (tipo ACS712)
